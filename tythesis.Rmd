@@ -1,0 +1,1347 @@
+---
+title: "Thesis"
+author: "ting yu"
+date: "06/04/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(fpp2)
+library(tidyverse)
+library(readxl) # read the excel files
+library(dplyr) # mutate?? case_when
+library(lubridate) # for dates
+library(ggpubr) # combline ggplots
+library(zoo) # change year_quarter into a timeseries 
+library(hts) 
+library(broom)
+library(magrittr)
+```
+
+```{r cleaning, echo = FALSE,warning=FALSE}
+# https://www.philadelphiafed.org/research-and-data/real-time-center/survey-of-professional-forecasters/data-files
+gdp <- read_excel("data/Mean_NGDP_Level.xlsx")
+price <- read_excel("data/Mean_PGDP_Level.xlsx")
+real_GDP <- read_excel("data/Mean_RGDP_Level.xlsx")
+# https://fred.stlouisfed.org/series/FEDFUNDS
+# base 1958-01-01
+fed <- read_excel("data/FEDFUNDS.xls", skip = 10)
+# https://fred.stlouisfed.org/series/GDPPOT
+pgdp <- read_excel("data/GDPPOT.xls", skip = 10)
+rgdp <- read_excel("data/GDPC1.xls", skip = 10)
+test <- read_excel("data/GDP.xls", skip = 10)
+
+test %<>%
+  mutate(year = year(observation_date),
+          quarter = quarter(observation_date))
+
+fed %<>%
+  mutate(year = year(observation_date),
+          quarter = quarter(observation_date))
+
+pgdp %<>%
+  mutate(year = year(observation_date),
+          quarter = quarter(observation_date))
+
+rgdp %<>% 
+  mutate( year = year(observation_date),
+          quarter = quarter(observation_date)) %>%
+  rename(rGDP = GDPC1)
+
+#merging the data togther 
+mydata <- full_join(fed, price, by = c('year' = 'YEAR', 'quarter' = 'QUARTER')) 
+mydata <- full_join(mydata, gdp, by= c("year"= "YEAR", 'quarter' = 'QUARTER'))
+mydata <- full_join(mydata, pgdp, by = c("year" = "year", "quarter" = "quarter"))
+mydata <- full_join(mydata, real_GDP, by = c("year" = "YEAR", "quarter" = "QUARTER"))
+mydata <- full_join(mydata, rgdp, by= c("year" = "year", "quarter" = "quarter"))
+mydata <- full_join(mydata, test, by= c("year" = "year", "quarter" = "quarter"))
+
+mydata %<>% 
+  mutate(year_quarter = paste(year,quarter,sep = "-"),
+         fed_rate = FEDFUNDS/100)
+
+mydata$year_quarter %<>%  as.yearqtr()
+
+mydata %<>% 
+  mutate(PGDP1 = lead(PGDP1))
+
+mydata %>% 
+  filter(year >= 1968 , year <= 2020) %>%
+  ggplot(aes(x= year_quarter, y = PGDP1))+ 
+  geom_line()+ 
+  theme_classic()+ 
+  ylab("chain-weighted GDP price index")+ 
+  xlab("Date")
+
+mydata %>% 
+  filter(year >= 1968 , year <= 2020) %>%
+  ggplot(aes(x= year_quarter,y= RGDP1))+ 
+  geom_line()+ 
+  theme_classic()+ 
+  xlab("Date") + 
+  ylab("Real GDP not accouting for base year chnages")
+```
+
+```{r realised CPI, echo = FALSE,warning=FALSE}
+historic <-price[,1:3]
+
+historic %<>%
+  mutate(year_quarter = paste(YEAR,QUARTER,sep = "-"))
+
+mean = c()
+range <- list(
+  c('1976-1','1985-4'),c('1986-1','1991-4'),c('1992-1','1995-4'),
+  c('1996-1','1999-3'),c('1999-4','2003-4'),c('2004-1','2009-2'),
+  c('2009-3','2013-2'),c('2013-3','2018-2'),c('2018-3','2020-1'))
+
+baseyr = c(1972,1982,1987,1992,1996,2000,2005,2009,2012)
+
+for (i in 1:9){
+  
+  rangei = range[[i]]
+  
+  historic_range<- historic %>% 
+    filter(year_quarter >= rangei[1] , year_quarter <= rangei[2]) 
+  
+  historic_base<- historic %>%
+    filter(YEAR == baseyr[i]) 
+  
+  historic_range[,3] = historic_range[,3]*
+    mean(historic_base[,3] %>% as_vector)/100
+  
+  row_idx <- which(historic$year_quarter >= rangei[1] & historic$year_quarter <=rangei[2])
+  
+  historic[row_idx,3] =  historic_range[,3]
+}
+
+
+historic$year_quarter %<>% as.yearqtr()
+
+historic %>%
+ggplot(aes(x= year_quarter, y = PGDP1))+ 
+  geom_line()+ 
+  ylab("Chain-weighted GDP price index")+ 
+  xlab("Date") + 
+  theme_classic(base_size = 13,
+                base_family = "",
+                base_line_size = 12/22,
+                base_rect_size = 12/22) 
+  
+
+historic %<>% 
+  mutate(CPI = lead(PGDP1))
+
+
+
+mydata <- full_join(mydata, historic, by= c("year_quarter" = "year_quarter"))
+
+mydata %<>%
+  filter( year >= 1968 & year <= 2020)
+
+
+
+```
+
+```{r CPI 1 step ahead, echo = FALSE,warning=FALSE}
+historic <-price[,1:4] %>% select(-3)
+
+historic %<>%
+  mutate(year_quarter = paste(YEAR,QUARTER,sep = "-"))
+
+mean = c()
+range <- list(
+  c('1976-1','1985-4'),c('1986-1','1991-4'),c('1992-1','1995-4'),
+  c('1996-1','1999-3'),c('1999-4','2003-4'),c('2004-1','2009-2'),
+  c('2009-3','2013-2'),c('2013-3','2018-2'),c('2018-3','2020-1'))
+
+baseyr = c(1972,1982,1987,1992,1996,2000,2005,2009,2012)
+
+for (i in 1:9){
+  
+  rangei = range[[i]]
+  
+  historic_range<- historic %>% 
+    filter(year_quarter >= rangei[1] , year_quarter <= rangei[2]) 
+  
+  historic_base<- historic %>%
+    filter(YEAR == baseyr[i]) 
+  
+  historic_range[,3] = historic_range[,3]*
+    mean(historic_base[,3] %>% as_vector)/100
+  
+  row_idx <- which(historic$year_quarter >= rangei[1] & historic$year_quarter <=rangei[2])
+  
+  historic[row_idx,3] =  historic_range[,3]
+}
+historic$year_quarter %<>% as.yearqtr()
+
+historic %>%
+ggplot(aes(x= year_quarter, y = PGDP2))+ 
+  geom_line()+ 
+  ylab("Chain-weighted GDP price index")+ 
+  xlab("Date") + 
+  theme_classic(base_size = 13,
+                base_family = "",
+                base_line_size = 12/22,
+                base_rect_size = 12/22) 
+
+historic %<>% 
+  rename(forecast_CPI = PGDP2)
+
+mydata <- full_join(mydata, historic, by= c("year_quarter" = "year_quarter"))
+
+mydata %<>%
+  filter( year >= 1968 & year <= 2020)
+```
+
+```{r CPI 2 step ahead, echo = FALSE,warning=FALSE}
+
+historic <-price[,1:5] %>% select(-(3:4))
+
+historic %<>%
+  mutate(year_quarter = paste(YEAR,QUARTER,sep = "-"))
+
+mean = c()
+range <- list(
+  c('1976-1','1985-4'),c('1986-1','1991-4'),c('1992-1','1995-4'),
+  c('1996-1','1999-3'),c('1999-4','2003-4'),c('2004-1','2009-2'),
+  c('2009-3','2013-2'),c('2013-3','2018-2'),c('2018-3','2020-1'))
+
+baseyr = c(1972,1982,1987,1992,1996,2000,2005,2009,2012)
+
+for (i in 1:9){
+  
+  rangei = range[[i]]
+  
+  historic_range<- historic %>% 
+    filter(year_quarter >= rangei[1] , year_quarter <= rangei[2]) 
+  
+  historic_base<- historic %>%
+    filter(YEAR == baseyr[i]) 
+  
+  historic_range[,3] = historic_range[,3]*
+    mean(historic_base[,3] %>% as_vector)/100
+  
+  row_idx <- which(historic$year_quarter >= rangei[1] & historic$year_quarter <=rangei[2])
+  
+  historic[row_idx,3] =  historic_range[,3]
+}
+
+historic$year_quarter %<>% as.yearqtr()
+
+historic %>%
+ggplot(aes(x= year_quarter, y = PGDP3))+ 
+  geom_line()+ 
+  ylab("Chain-weighted GDP price index")+ 
+  xlab("Date") + 
+  theme_classic(base_size = 13,
+                base_family = "",
+                base_line_size = 12/22,
+                base_rect_size = 12/22) 
+
+historic %<>% 
+  mutate(forecast_CPI3 = lead(PGDP3))
+
+mydata <- full_join(mydata, historic, by= c("year_quarter" = "year_quarter"))
+```
+
+
+
+```{r graph , echo = FALSE,warning=FALSE}
+# mydata %>% 
+#   ggplot(aes(x= year_quarter, y = muti)) + 
+#   geom_line() + 
+#   geom_vline(xintercept = 2013)
+
+
+mydata %>% 
+  filter( year_quarter <= "2020-1") %>%
+  ggplot(aes(x= year_quarter, y = rGDP))+ 
+  geom_line()+ 
+  ylab("Billions of Chained 2012 Dollars")+ 
+  xlab("Date")+
+    theme_classic(base_size = 13,
+                base_family = "",
+                base_line_size = 12/22,
+                base_rect_size = 12/22) 
+
+mydata %>% 
+  filter( year_quarter <= "2020-1") %>%
+  ggplot(aes(x= year_quarter, y = rGDP, col = "real GDP"))+ 
+  geom_line()+ 
+  geom_line(aes(x= year_quarter, y = GDPPOT, col = "real potential GDP"))+ 
+  ylab("Billions of Chained 2012 Dollars")+ 
+  xlab("Date")+
+  theme_classic(base_size = 13,
+                base_family = "",
+                base_line_size = 12/22,
+                base_rect_size = 12/22) 
+
+
+mydata %>% 
+  filter( year_quarter <= "2020-1") %>%
+  ggplot(aes(x= year_quarter, y = rGDP, col = "Real GDP"))+ 
+  geom_line()+ 
+  geom_line(aes(x= year_quarter, y = GDPPOT, col = "Real potential GDP"))+ 
+  ylab("Billions of Chained 2012 Dollars")+ 
+  xlab("Date")+
+  theme_classic()
+```
+
+
+
+
+```{r setting up, echo = FALSE,warning=FALSE}
+mydata %<>% 
+  mutate(muti = rGDP/RGDP1,
+    frgdp = RGDP2*muti, #forecast 
+    GDP_gap = 4*(log(frgdp) - log(GDPPOT)), 
+    gdp_deflator = log(forecast_CPI)-log(lag(forecast_CPI)),
+    theory_1 = 0.02+ gdp_deflator + 0.5*(gdp_deflator - 0.02) + 0.5*(GDP_gap),
+    theory_2 = 0.025+ gdp_deflator + 0.5*(gdp_deflator - 0.02) + 0.5*(GDP_gap),
+    error_1 = (fed_rate - theory_1)^2,
+    error_2 = (fed_rate - theory_2)^2,
+    NZ_theory = case_when( theory_1 <= 0 ~ 0, 
+                           TRUE ~ theory_1))
+
+mean(mydata$error_1, na.rm = T)
+mean(mydata$error_2, na.rm = T)
+```
+```{r graph}
+mydata %>% 
+  summarise(mean(error_1, na.rm = TRUE))
+
+mydata %>% 
+  ggplot(aes( x= year_quarter, y = theory_1, col = "Theoretical"))+ 
+  geom_line() + 
+  geom_line(aes( x = year_quarter, y= fed_rate, col = "Federal"))+ 
+  theme_test() + 
+  ylab("Interest Rates")+ 
+  xlab("Date") + 
+  geom_vline(xintercept = 2007.75) + 
+  geom_vline(xintercept = 2009.25) +
+   geom_vline(xintercept = 1993)
+
+  
+  
+
+ mydata %>% 
+  filter(year_quarter >= "1968-4") %>%
+  ggplot(aes( x= year_quarter, y = NZ_theory, col = "Theoretical"))+ 
+  geom_line() + 
+  geom_line(aes( x = year_quarter, y= fed_rate, col = "Federal"))+ 
+  theme_test() + 
+  ylab("interest rates")+ 
+  xlab("Date") + 
+  geom_vline(xintercept = 1993, col = "black")+
+  geom_vline(xintercept = 2004, col = "black")
+  # geom_text(label="when taylor rule was intorduced", colour = "black" , x= 2005 , y = 0.15)
+
+mydata %>%
+  ggplot(aes(x= year_quarter, y= gdp_deflator))+ 
+  geom_line() 
+```
+
+
+```{r creating }
+mydata %<>% 
+  mutate(baseA = 0.025+ gdp_deflator + 0.5*(gdp_deflator - 0.02), 
+    baseB = 0.5*(GDP_gap),
+    baseC = lag(fed_rate) - baseA - baseB,
+    
+    realised_GDP = RGDP1*muti,
+    realised_GDP_gap = 4*(log(realised_GDP) - log(GDPPOT)),
+    realised_GDP_gdp_deflator = lead(log(CPI)-log(lag(CPI))),
+    
+    realised_baseA = 0.025+ realised_GDP_gdp_deflator + 0.5*(realised_GDP_gdp_deflator - 0.02),
+    realised_baseB = 0.5*(realised_GDP_gap),
+    realised_baseC = fed_rate - realised_baseA - realised_baseB
+    )
+```
+
+
+
+
+```{r, train}
+
+mydata %>% 
+  filter(year_quarter>= 1993) %>%
+  ggplot(aes( x= year_quarter, y = theory_1, col = "Theoretical"))+ 
+  geom_line() + 
+  geom_line(aes( x = year_quarter, y= fed_rate, col = "Federal"))+ 
+  theme_test() + 
+  ylab("Interest Rates")+ 
+  xlab("Date") + 
+  geom_vline(xintercept = 2007.75) + 
+  geom_vline(xintercept = 2009.25) + 
+  geom_vline(xintercept = 2003.75) + 
+  geom_vline(xintercept = 1997.75) +
+  geom_vline(xintercept = 2015)
+```
+```{r}
+#test 1969Q1 to 2019Q3
+
+SPF <- mydata %>% 
+  filter(year_quarter >= "1993Q1" & year_quarter<= "2019Q3") %>%
+  select(baseA, baseB, baseC) %>% 
+  mutate(tot = baseA, baseB+ baseC) %>%
+  select(tot, baseA, baseB, baseC)
+
+
+realised_y <- mydata %>% 
+  filter(year_quarter >= "1993Q1" & year_quarter<= "2019Q3") %>%
+  select(realised_baseA, realised_baseB, realised_baseC) %>%
+  mutate(tot = realised_baseA +realised_baseB +realised_baseC) %>%
+  select(tot,realised_baseA, realised_baseB, realised_baseC)
+
+date <-  mydata %>% 
+  filter(year_quarter >= "1993Q1" & year_quarter<= "2019Q3") %>%
+  select(year_quarter) 
+
+head(realised_y)
+
+row_1 <- c(1,1,0,0)
+row_2 <- c(1,0,1,0)
+row_3 <- c(1,0,0,1)
+
+S<- cbind(row_1,row_2,row_3)
+
+row_1 <- c(0,1,0,0)
+row_2 <- c(0,0,1,0)
+row_3 <- c(0,0,0,1)
+
+J <- rbind(row_1,row_2,row_3)
+
+U<- c(1,rep(-1,3))
+
+df <- data.frame()
+
+sample = 20
+for (i in sample:NROW(SPF)){
+  X = SPF[1:i,]
+  rX = realised_y[1:i,]
+  esp = X - rX 
+  esp %<>% summarise(
+    bias_tot = mean(tot), 
+    bias_baseA = mean(baseA),
+    bias_baseB = mean(baseB),
+    bias_baseC = mean(baseC),
+  )
+  uX <- X %>% mutate(
+    ubias_tot = tot - as.numeric(esp[1]), 
+    ubias_baseA = baseA - as.numeric(esp[2]),
+    ubias_baseB = baseB - as.numeric(esp[3]),
+    ubias_baseC = baseC - as.numeric(esp[4]),
+  ) %>% select(ubias_tot,ubias_baseA,ubias_baseB,ubias_baseC)
+
+  W = var(rX - uX)
+
+  train <- SPF[1:i,]
+  fc <- SPF[i+1,]
+  
+  fcc<-train[,1] %>% 
+  auto.arima(stepwise = F)%>%
+  forecast(h=1)
+  fc[1] = as.numeric(fcc[4])
+  fc[2] = fc[2] -  as.numeric(esp[2])
+  fc[3] = fc[3] -  as.numeric(esp[3])
+  fcc<-train[,4] %>% 
+  auto.arima(stepwise = F)%>%
+  forecast(h=1)
+  fc[4] = as.numeric(fcc[4])
+
+  
+  df[(i + 1 - sample),"date"] = date[i,]
+  df[(i + 1 - sample),"u_tot"] = fc[1]
+  df[(i + 1 - sample),"u_A"] = fc[2]
+  df[(i + 1 - sample),"u_B"] = fc[3]
+  df[(i + 1 - sample),"u_C"] = fc[4]
+  
+  rf<- S%*%(J-J%*%W%*%U%*%solve(t(U)%*%W%*%U)%*%t(U))%*%t(fc)
+  
+  df[(i + 1 - sample),"r_tot"] = rf[1]
+  df[(i + 1 - sample),"r_A"] = rf[2]
+  df[(i + 1 - sample),"r_B"] = rf[3]
+  df[(i + 1 - sample),"r_C"] = rf[4]  
+  
+  df[(i + 1 - sample),"mse_tot"] = (realised_y[i+1,][1] - rf[1])^2 - (realised_y[i+1,][1] - fc[1])^2
+  df[(i + 1 - sample),"mse_A"] = (realised_y[i+1,][2] - rf[2])^2 - (realised_y[i+1,][2] - fc[1])^2
+  df[(i + 1 - sample),"mse_B"] = (realised_y[i+1,][3] - rf[3])^2 - (realised_y[i+1,][3] - fc[3])^2
+  df[(i + 1 - sample),"mse_C"] = (realised_y[i+1,][4] - rf[4])^2 - (realised_y[i+1,][4] - fc[4])^2
+  
+  df[(i + 1 - sample),"recon_mse_tot"] = (realised_y[i+1,][1] - rf[1])^2 
+  df[(i + 1 - sample),"recon_mse_A"] = (realised_y[i+1,][2] - rf[2])^2 
+  df[(i + 1 - sample),"recon_mse_B"] = (realised_y[i+1,][3] - rf[3])^2
+    
+  df[(i + 1 - sample),"un_mse_tot"] = (realised_y[i+1,][1] - fc[1])^2
+  df[(i + 1 - sample),"un_mse_A"] = (realised_y[i+1,][2] - fc[2])^2
+  df[(i + 1 - sample),"un_mse_B"] = (realised_y[i+1,][3] - fc[3])^2
+  
+  
+  df[(i + 1 - sample),"realised_tot"] = realised_y[i+1,][1]
+  df[(i + 1 - sample),"realised_A"] = realised_y[i+1,][2]
+  df[(i + 1 - sample),"realised_B"] = realised_y[i+1,][3]
+  df[(i + 1 - sample),"realised_C"] = realised_y[i+1,][4] 
+  
+  df[(i + 1 - sample),"error_ra"] = ((realised_y[i+1,][2] - rf[2])/1.5)
+  df[(i + 1 - sample),"error_rb"] = (realised_y[i+1,][3] - rf[3])
+  df[(i + 1 - sample),"error_ua"] = ((realised_y[i+1,][2] - fc[2])/1.5)
+  df[(i + 1 - sample),"error_ub"] = (realised_y[i+1,][3] - fc[3])
+  }
+
+df2<- df %>% na.omit(df)
+
+ggplot(df2)+ 
+  geom_line(aes(x= date, y = mse_A/1.5^2))+ 
+  geom_hline(yintercept = 0)+ 
+  ggtitle("Differences in MSE for Inflation Forecast")+
+  xlab("Date")+
+  ylab("MSE")+
+  theme_test() +
+  geom_vline(xintercept = 2007.75)+ 
+  geom_vline(xintercept = 2009.25)
+
+
+
+ggplot(df2)+ 
+  geom_line(aes(x= date, y = recon_mse_B, col = "recon"))+ 
+  geom_line(aes(x= date, y = un_mse_B,col = "unbias"))+ 
+  ggtitle("MSE for forecast B")+
+  xlab("Date")+
+  ylab("MSE")+
+  theme_test() 
+
+
+ggplot(df2)+ 
+  geom_line(aes(x= date, y = mse_B/100))+ 
+  geom_hline(yintercept = 0)+
+  ggtitle("Differences in MSE for GDP deflator forecast")+
+  xlab("Date")+
+  ylab("MSE")+
+  theme_test()
+
+
+ggplot(df2)+ 
+  geom_line(aes(x= date, y = mse_A, col = "A"))+ 
+  geom_hline(yintercept = 0)+
+  geom_line(aes(x= date, y = mse_B))
+
+
+ggplot(df2)+ 
+  geom_line(aes(x= date, y= u_A, col = "Unbiased")) + 
+  geom_line(aes(x= date, y= realised_A, col = "Realised")) +
+  geom_line(aes(x= date, y= r_A, col= "Reconciled")) +
+  ggtitle("Forecast of A")+
+  xlab("Date")+
+  ylab("Interest rate")+
+  theme_test()
+
+df2$date %<>% yearqtr() 
+
+
+
+ggplot(df2)+ 
+  geom_line(aes(x= date, y = error, col = "recon"))+ 
+  geom_vline(xintercept = 2008.75, col = "1993")
+
+ggplot(df2)+ 
+  geom_line(aes(x= date, y = recon_mse_A/1.5^2, col = "Reconciled"))+ 
+  geom_line(aes(x= date, y = un_mse_A/1.5^2,col = "Unbiased"))+ 
+  ggtitle("Squared Error (SE) For Inflation Forecast")+
+  xlab("Date")+
+  ylab("SE")+
+  theme_test() +
+  geom_vline(xintercept = 2007.75, col ="green")+ 
+  geom_vline(xintercept = 2009.25, col ="black")
+
+ggplot(df2)+ 
+  geom_line(aes(x= date, y = diff_mse_A/1.5^2))+ 
+  geom_hline(yintercept = 0)+ 
+  ggtitle("Differences in the Squared Error (SE) For Inflation Forecast")+
+  xlab("Date")+
+  ylab("SE")+
+  theme_test() +
+  geom_vline(xintercept = 2007.75,colour= "red")+ 
+  geom_vline(xintercept = 2009.25,colour = "yellow")
+
+ggplot(df2)+ 
+  geom_line(aes(x= date, y = recon_mse_B, col ="Reconciled"))+ 
+  geom_line(aes(x= date, y = un_mse_B,col = "Unbiased"))+ 
+  ggtitle(" Squared Error (SE) for Forecast GDP gap")+
+  xlab("Date")+
+  ylab("SE")+
+  theme_test() 
+
+
+ggplot(df2)+ 
+  geom_line(aes(x= date, y = diff_mse_B))+ 
+  geom_hline(yintercept = 0)+
+  ggtitle("Differences in Squared Error (SE) for GDP Deflator Forecast")+
+  xlab("Date")+
+  ylab("SE")+
+  theme_test()
+
+df2 %<>% na.omit()
+df2$date %<>% yearqtr()
+table<- df2%>% select(date,recon_mse_A,un_mse_A,recon_mse_B,un_mse_B)
+
+
+head(df)
+df %<>% na.omit()
+df$date %<>% yearqtr()
+
+tail(df)
+
+```
+
+
+```{r}
+
+t1<- table %>% 
+  filter(date<2004) %>%
+  summarise(ra = mean(recon_mse_A/(1.5^2)),
+            ua = mean(un_mse_A/(1.5^2)),
+            rb = mean(recon_mse_B),
+            ub = mean(un_mse_B))
+
+t2 <- table %>% filter(date>=2004,date<2007.75) %>%
+  summarise(ra = mean(recon_mse_A/(1.5^2)),
+            ua = mean(un_mse_A/(1.5^2)),
+            rb = mean(recon_mse_B),
+            ub = mean(un_mse_B))
+
+t3 <- table %>% filter(date>=2007.75,date<=2009.25) %>%
+  summarise(ra = mean(recon_mse_A/(1.5^2)),
+            ua = mean(un_mse_A/(1.5^2)),
+            rb = mean(recon_mse_B),
+            ub = mean(un_mse_B))
+
+t4 <- table %>% filter(date>=2009.50,date<=2014.75) %>%
+  summarise(ra = mean(recon_mse_A/(1.5^2)),
+            ua = mean(un_mse_A/(1.5^2)),
+            rb = mean(recon_mse_B),
+            ub = mean(un_mse_B))
+
+t5 <- table %>% filter(date>=2015) %>%
+  summarise(ra = mean(recon_mse_A/(1.5^2)),
+            ua = mean(un_mse_A/(1.5^2)),
+            rb = mean(recon_mse_B),
+            ub = mean(un_mse_B))
+
+e1 <- df%>%
+  filter(date<2004) %>%
+  select(error_ra)
+
+e2 <- df%>%
+  filter(date<2004) %>%
+  select(error_ua)
+
+ee1 <-c()
+for (i in 1:nrow(e1)){
+  ee1[i] = as.numeric(e1[i,1])}
+
+ee2<-c()
+for (i in 1:nrow(e2)){
+  ee2[i] = as.numeric(e2[i,1])} 
+
+dm.test(ee1,ee2)
+
+e1 <- df%>%
+  filter(date>=2004,date<2007.75) %>%
+  select(error_ra)
+
+e2 <- df%>%
+  filter(date>=2004,date<2007.75) %>%
+  select(error_ua)
+
+ee1 <-c()
+for (i in 1:nrow(e1)){
+  ee1[i] = as.numeric(e1[i,1])}
+
+ee2<-c()
+for (i in 1:nrow(e2)){
+  ee2[i] = as.numeric(e2[i,1])} 
+
+dm.test(ee1,ee2)
+
+e1 <- df%>%
+  filterdate>=2007.75,date<=2009.25) %>%
+  select(error_ra)
+
+e2 <- df%>%
+  filter(date>=2007.75,date<=2009.25) %>%
+  select(error_ua)
+
+ee1 <-c()
+for (i in 1:nrow(e1)){
+  ee1[i] = as.numeric(e1[i,1])}
+
+ee2<-c()
+for (i in 1:nrow(e2)){
+  ee2[i] = as.numeric(e2[i,1])} 
+
+dm.test(ee1,ee2)
+e1 <- df%>%
+  filter(date>=2009.50,date<=2014.75) %>%
+  select(error_ra)
+
+e2 <- df%>%
+  filter(date>=2009.50,date<=2014.75) %>%
+  select(error_ua)
+
+ee1 <-c()
+for (i in 1:nrow(e1)){
+  ee1[i] = as.numeric(e1[i,1])}
+
+ee2<-c()
+for (i in 1:nrow(e2)){
+  ee2[i] = as.numeric(e2[i,1])} 
+
+dm.test(ee1,ee2)
+e1 <- df%>%
+  filter(date>=2015) %>%
+  select(error_ra)
+
+e2 <- df%>%
+  filter(date>=2015) %>%
+  select(error_ua)
+
+ee1 <-c()
+for (i in 1:nrow(e1)){
+  ee1[i] = as.numeric(e1[i,1])}
+
+ee2<-c()
+for (i in 1:nrow(e2)){
+  ee2[i] = as.numeric(e2[i,1])} 
+
+dm.test(ee1,ee2)
+
+
+
+t1
+t2
+t3
+t4
+t5
+
+rbind(t1,t2,t3,t4,t5) %>% table()
+
+```
+
+
+```{r}
+mydata %<>% mutate(
+  newbaseA = baseA - as.numeric(epsilon[1]),
+  newbaseB = baseB - as.numeric(epsilon[2]),
+  newbaseC = baseC - as.numeric(epsilon[3])) 
+```
+
+
+```{r}
+#unbias X 
+uX <- mydata %>% 
+  filter(year_quarter>= "1969Q1" & year_quarter <= "2016Q1") %>%
+  select(newbaseA, newbaseB,newbaseC)
+```
+
+```{r}
+X <- mydata %>%
+  filter(year_quarter>= "1969Q1" & year_quarter <= "2016Q1") %>%
+  select(baseA,baseB,baseC)
+# 1969 Q1 to 2020 Q1
+
+rX = realised_bts
+# 1969 Q1 to 2019 Q4
+
+epsilonX <- rX - uX
+
+var(epsilonX) %>% solve()
+
+train <- mydata %>% 
+  filter(year_quarter>= "1969Q1" & year_quarter <= "2020Q1") %>% 
+  select(newbaseA, newbaseB,newbaseC) %>% 
+  mutate (tot = newbaseA + newbaseB +newbaseC ) %>% 
+  select(tot,newbaseA,newbaseB,newbaseC)
+
+realised_bts %<>% 
+  mutate(
+    r_tot = realised_baseA + realised_baseB + realised_baseC
+  )
+```
+
+
+
+
+```{r}
+nbts %<>% mutate(
+  newABC = newbaseA + newbaseB + newbaseC,
+  newAB = newbaseA + newbaseB,
+  newC = newbaseC
+) %>%
+  select(newABC,newbaseA ,newbaseB, newbaseC )
+
+realised_bts %<>% mutate(
+  newABC = realised_baseA + realised_baseB + realised_baseC,
+  newAB = realised_baseA + realised_baseB,
+  newC = realised_baseC
+) %>%
+  select(newABC,realised_baseA ,realised_baseB, realised_baseC)
+```
+
+
+
+```{r}
+
+forecast_error <- (realised_bts - nbts)
+
+W<- var(forecast_error)
+
+solve(t(U)%*%W%*%U)
+
+S%*%(J-J%*%W%*%U%*%solve(t(U)%*%W%*%U)%*%t(U))
+
+reconciled<- t(S%*%(J-J%*%W%*%U%*%solve(t(U)%*%W%*%U)%*%t(U))%*%t(nbts)) 
+
+rcon_ABC <- reconciled[,1] 
+rcon_A <- reconciled[,2]
+rcon_B <- reconciled[,3]
+rcon_C <- reconciled[,4]
+
+year_quarter<- mydata %>%  
+  filter(year_quarter>= "1969Q1" & year_quarter <= "2016Q1")  %>%
+  select(year_quarter)
+
+reconciled <- cbind(year_quarter,rcon_ABC,rcon_A,rcon_B,rcon_C)
+
+
+mydata <- full_join(mydata, reconciled, by = c('year_quarter'= 'year_quarter')) 
+```
+
+
+
+
+```{r, test}
+#####   HERE  #######
+
+#test  "2016Q2" to "2019Q3"
+
+bts <- mydata %>% 
+  filter(year_quarter >= "2016Q2" & year_quarter<= "2019Q3") %>%
+  select(baseA, baseB, baseC)
+
+realised_bts <- mydata %>% 
+  filter(year_quarter >= "2016Q2" & year_quarter<= "2019Q3") %>%
+  select(realised_baseA, realised_baseB, realised_baseC)
+
+epsilon = bts - realised_bts 
+
+epsilon %<>% summarise(biasA  = mean(baseA), 
+                      biasB = mean(baseB),
+                      biasC = mean(baseC))
+```
+
+```{r}
+
+bts %<>% mutate(
+  testnewbaseA = baseA - as.numeric(epsilon[1]),
+  testnewbaseB = baseB - as.numeric(epsilon[2]),
+  testnewbaseC = baseC - as.numeric(epsilon[3])
+) 
+year_quarter<- mydata %>%  
+  filter(year_quarter>= "2016Q2" & year_quarter <= "2019Q3")  %>%
+  select(year_quarter)
+
+newbase <- cbind(year_quarter,bts%>% select(testnewbaseA,testnewbaseB,testnewbaseC))
+
+mydata <- full_join(mydata,newbase, by =c("year_quarter"="year_quarter"))
+
+
+
+#2016Q2 to 2019Q3
+
+
+testnbts <- mydata %>% 
+  filter(year_quarter >= "2016Q2" & year_quarter<= "2019Q3") %>%
+  select(testnewbaseA, testnewbaseB, testnewbaseC)
+
+ data1<- mydata %>% 
+  filter(year_quarter >= "2016Q2" & year_quarter<= "2019Q3")
+
+ ggplot(data1)+ 
+   geom_line(aes(x= year_quarter , y = newbaseA), colour = "blue") + 
+   geom_line(aes(x= year_quarter , y = baseA, colour = "red"))
+ 
+ ggplot(data1)+ 
+   geom_line(aes(x= year_quarter , y = newbaseC), colour = "blue") + 
+   geom_line(aes(x= year_quarter , y = baseC), colour = "red")
+ 
+testnbts %<>% mutate(
+  testnewABC = testnewbaseA + testnewbaseB + testnewbaseC) %>%
+  select(testnewABC, testnewbaseA, testnewbaseB, testnewbaseC)
+ 
+ 
+ 
+testreconciled<- t(S%*%(J-J%*%W%*%U%*%solve(t(U)%*%W%*%U)%*%t(U))%*%t(testnbts)) 
+
+
+testrcon_ABC <- testreconciled[,1] 
+testrcon_A <- testreconciled[,2]
+testrcon_B <- testreconciled[,3]
+testrcon_C <- testreconciled[,4]
+
+newbase <- cbind(year_quarter,testrcon_ABC,testrcon_A,testrcon_B,testrcon_C)
+
+mydata <- full_join(mydata,newbase, by =c("year_quarter"="year_quarter"))
+```
+
+
+
+```{r, harder case}
+row_1 <- c(1,1,0)
+row_2 <- c(1,0,1)
+
+
+s<- cbind(row_1,row_2)
+
+row_1 <- c(0,1,0)
+row_2 <- c(0,0,1)
+
+
+j <- rbind(row_1,row_2)
+
+u <- c(1,-1,-1)
+```
+
+```{r}
+
+df <- data.frame()
+
+sample = 20
+
+for (i in sample:NROW(SPF)){
+  X = SPF[1:i,]
+  rX = realised_y[1:i,]
+  esp = X - rX 
+  esp %<>% summarise(
+    bias_tot = mean(tot), 
+    bias_baseA = mean(baseA),
+    bias_baseB = mean(baseB),
+    bias_baseC = mean(baseC),
+  )
+  
+  uX <- X %>% mutate(
+    ubias_tot = tot - as.numeric(esp[1]), 
+    ubias_baseA = baseA - as.numeric(esp[2]),
+    ubias_baseB = baseB - as.numeric(esp[3]),
+    ubias_baseC = baseC - as.numeric(esp[4]),
+    new_A = ubias_baseA + var(ubias_baseA)/(var(ubias_baseA)+ var(ubias_baseB))*ubias_baseC,
+    new_B = ubias_baseB + var(ubias_baseB)/(var(ubias_baseA)+ var(ubias_baseB))*ubias_baseC
+  ) %>% select(ubias_tot,new_A,new_B)
+
+  rX %<>% select(tot, realised_baseA,realised_baseB)
+  w = var(rX - uX)
+  
+  fc <- SPF[i+1,]
+  fc%<>% select(-baseC)
+  fc[1] = fc[1] -  as.numeric(esp[1])
+  fc[2] = fc[2] -  as.numeric(esp[2])
+  fc[3] = fc[3] -  as.numeric(esp[3])
+
+  
+  df[(i + 1 - sample),"date"] = date[i,]
+  df[(i + 1 - sample),"u_tot"] = fc[1]
+  df[(i + 1 - sample),"u_A"] = fc[2]
+  df[(i + 1 - sample),"u_B"] = fc[3]
+
+  
+  rf<- s%*%(j-j%*%w%*%u%*%solve(t(u)%*%w%*%u)%*%t(u))%*%t(fc)
+  
+  df[(i + 1 - sample),"r_tot"] = rf[1]
+  df[(i + 1 - sample),"r_A"] = rf[2]
+  df[(i + 1 - sample),"r_B"] = rf[3]
+
+  df[(i + 1 - sample),"diff_mse_tot"] = (realised_y[i+1,][1] - rf[1])^2 - (realised_y[i+1,][1] - fc[1])^2
+  df[(i + 1 - sample),"diff_mse_A"] = (realised_y[i+1,][2] - rf[2])^2 - (realised_y[i+1,][2] - fc[2])^2
+  df[(i + 1 - sample),"diff_mse_B"] = (realised_y[i+1,][3] - rf[3])^2 - (realised_y[i+1,][3] - fc[3])^2  
+
+  df[(i + 1 - sample),"recon_mse_tot"] = (realised_y[i+1,][1] - rf[1])^2 
+  df[(i + 1 - sample),"recon_mse_A"] = (realised_y[i+1,][2] - rf[2])^2 
+  df[(i + 1 - sample),"recon_mse_B"] = (realised_y[i+1,][3] - rf[3])^2
+    
+  df[(i + 1 - sample),"un_mse_tot"] = (realised_y[i+1,][1] - fc[1])^2
+  df[(i + 1 - sample),"un_mse_A"] = (realised_y[i+1,][2] - fc[2])^2
+  df[(i + 1 - sample),"un_mse_B"] = (realised_y[i+1,][3] - fc[3])^2
+
+  
+  df[(i + 1 - sample),"realised_tot"] = realised_y[i+1,][1]
+  df[(i + 1 - sample),"realised_A"] = realised_y[i+1,][2]
+  df[(i + 1 - sample),"realised_B"] = realised_y[i+1,][3]
+  
+  df[(i + 1 - sample),"error_ra"] = ((realised_y[i+1,][2] - rf[2])/1.5)
+  df[(i + 1 - sample),"error_rb"] = (realised_y[i+1,][3] - rf[3])
+  df[(i + 1 - sample),"error_ua"] = ((realised_y[i+1,][2] - fc[2])/1.5)
+  df[(i + 1 - sample),"error_ub"] = (realised_y[i+1,][3] - fc[3])
+}
+
+
+df%<>%na.omit(df)
+
+head(df)
+
+ggplot(df)+ 
+  geom_line(aes(x= date, y = diff_mse_B, col = "reconsiled mse"))
+
+ggplot(df)+ 
+  geom_line(aes(x= date, y = diff_mse_tot/1.5^2))+ 
+  geom_hline(yintercept = 0)+ 
+  ggtitle("Differences in MSE for inflation forecast")+
+  xlab("Date")+
+  ylab("MSE")+
+  theme_test() 
+
+ggplot(df)+ 
+  geom_line(aes(x= date, y = recon_mse_A/1.5^2, col = "recon"))+ 
+  geom_line(aes(x= date, y = un_mse_A/1.5^2,col = "unbias"))+ 
+  ggtitle("MSE for forecast A")+
+  xlab("Date")+
+  ylab("MSE")+
+  theme_test() 
+
+ggplot(df)+ 
+  geom_line(aes(x= date, y = recon_mse_A- un_mse_A))+ 
+  ggtitle("MSE for forecast B")+
+  xlab("Date")+
+  ylab("MSE")+
+  theme_test() 
+
+
+ ggplot(df)+ 
+  geom_line(aes(x= date, y = diff_mse_B))+ 
+  geom_hline(yintercept = 0)+
+  ggtitle("Differences in MSE for GDP deflator forecast")+
+  xlab("Date")+
+  ylab("MSE")+
+  theme_test()
+
+
+ggplot(df)+ 
+  geom_line(aes(x= date, y = diff_mse_A, col = "A"))+ 
+  geom_hline(yintercept = 0)+
+  geom_line(aes(x= date, y = mse_B))
+
+
+
+ggplot(df2)+ 
+  geom_line(aes(x= date, y= u_A, col = "Unbiased")) + 
+  geom_line(aes(x= date, y= realised_A, col = "Realised")) +
+  geom_line(aes(x= date, y= r_A, col= "Reconciled")) +
+  ggtitle("Forecast of A")+
+  xlab("Date")+
+  ylab("Interest rate")+
+  theme_test()
+
+
+ggplot(df)+ 
+  geom_line(aes(x= date, y = recon_mse_A- un_mse_A))+ 
+  ggtitle("Differences in SE Infaltion Forecast")+
+  geom_hline(yintercept = 0)+
+  xlab("Date")+
+  ylab("SE")+
+  theme_test() +
+  geom_vline(xintercept = 2007.75, col ="black")+ 
+  geom_vline(xintercept = 2009.25, col ="black")
+
+```
+
+
+```{r table}
+
+df %<>% na.omit()
+df$date %<>% yearqtr()
+table<- df%>% select(date,recon_mse_A,un_mse_A,recon_mse_B,un_mse_B)
+
+
+head(df)
+df %<>% na.omit()
+df$date %<>% yearqtr()
+
+tail(df)
+
+
+t1<- table %>% 
+  filter(date<2004) %>%
+  summarise(ra = mean(recon_mse_A/(1.5^2)),
+            ua = mean(un_mse_A/(1.5^2)),
+            rb = mean(recon_mse_B),
+            ub = mean(un_mse_B))
+
+t2 <- table %>% filter(date>=2004,date<2007.75) %>%
+  summarise(ra = mean(recon_mse_A/(1.5^2)),
+            ua = mean(un_mse_A/(1.5^2)),
+            rb = mean(recon_mse_B),
+            ub = mean(un_mse_B))
+
+t3 <- table %>% filter(date>=2007.75,date<=2009.25) %>%
+  summarise(ra = mean(recon_mse_A/(1.5^2)),
+            ua = mean(un_mse_A/(1.5^2)),
+            rb = mean(recon_mse_B),
+            ub = mean(un_mse_B))
+
+t4 <- table %>% filter(date>=2009.50,date<=2014.75) %>%
+  summarise(ra = mean(recon_mse_A/(1.5^2)),
+            ua = mean(un_mse_A/(1.5^2)),
+            rb = mean(recon_mse_B),
+            ub = mean(un_mse_B))
+
+t5 <- table %>% filter(date>=2015) %>%
+  summarise(ra = mean(recon_mse_A/(1.5^2)),
+            ua = mean(un_mse_A/(1.5^2)),
+            rb = mean(recon_mse_B),
+            ub = mean(un_mse_B))
+
+e1 <- df%>%
+  filter(date<2004) %>%
+  select(error_ra)
+
+e2 <- df%>%
+  filter(date<2004) %>%
+  select(error_ua)
+
+ee1 <-c()
+for (i in 1:nrow(e1)){
+  ee1[i] = as.numeric(e1[i,1])}
+
+ee2<-c()
+for (i in 1:nrow(e2)){
+  ee2[i] = as.numeric(e2[i,1])} 
+
+dm.test(ee1,ee2)
+
+e1 <- df%>%
+  filter(date>=2004,date<2007.75) %>%
+  select(error_ra)
+
+e2 <- df%>%
+  filter(date>=2004,date<2007.75) %>%
+  select(error_ua)
+
+ee1 <-c()
+for (i in 1:nrow(e1)){
+  ee1[i] = as.numeric(e1[i,1])}
+
+ee2<-c()
+for (i in 1:nrow(e2)){
+  ee2[i] = as.numeric(e2[i,1])} 
+
+dm.test(ee1,ee2)
+
+e1 <- df%>%
+  filterdate>=2007.75,date<=2009.25) %>%
+  select(error_ra)
+
+e2 <- df%>%
+  filter(date>=2007.75,date<=2009.25) %>%
+  select(error_ua)
+
+ee1 <-c()
+for (i in 1:nrow(e1)){
+  ee1[i] = as.numeric(e1[i,1])}
+
+ee2<-c()
+for (i in 1:nrow(e2)){
+  ee2[i] = as.numeric(e2[i,1])} 
+
+dm.test(ee1,ee2)
+e1 <- df%>%
+  filter(date>=2009.50,date<=2014.75) %>%
+  select(error_ra)
+
+e2 <- df%>%
+  filter(date>=2009.50,date<=2014.75) %>%
+  select(error_ua)
+
+ee1 <-c()
+for (i in 1:nrow(e1)){
+  ee1[i] = as.numeric(e1[i,1])}
+
+ee2<-c()
+for (i in 1:nrow(e2)){
+  ee2[i] = as.numeric(e2[i,1])} 
+
+dm.test(ee1,ee2)
+e1 <- df%>%
+  filter(date>=2015) %>%
+  select(error_ra)
+
+e2 <- df%>%
+  filter(date>=2015) %>%
+  select(error_ua)
+
+ee1 <-c()
+for (i in 1:nrow(e1)){
+  ee1[i] = as.numeric(e1[i,1])}
+
+ee2<-c()
+for (i in 1:nrow(e2)){
+  ee2[i] = as.numeric(e2[i,1])} 
+
+dm.test(ee1,ee2)
+
+
+
+t1
+t2
+t3
+t4
+t5
+
+rbind(t1,t2,t3,t4,t5) %>% table()
+
+```
+
+
+
+```{r}
+nbts %<>% mutate(
+  new_baseA = newbaseA + 0.95*newbaseC,
+  new_baseB = newbaseB + 0.05*newbaseC,
+  newAB = new_baseA + new_baseB
+)%>% 
+  select(newAB, new_baseA, new_baseB)
+
+realised_bts <- mydata %>% 
+  filter(year_quarter>= "1969Q1" & year_quarter <= "2016Q1") %>%
+  select(realised_baseA, realised_baseB, realised_baseC)
+
+realised_bts %<>% mutate(
+  newAB = realised_baseA + realised_baseB
+) %>%
+  select(newAB, realised_baseA ,realised_baseB)
+
+
+forecast_error <- (realised_bts - nbts)
+
+w<- var(forecast_error)
+
+solve(t(u)%*%w%*%u)
+
+
+n<-t(s%*%(j-j%*%w%*%u%*%solve(t(u)%*%w%*%u)%*%t(u))%*%t(nbts))
+
+```
+
+
+```{r, warning=F}
+data1 %>% 
+  select(year_quarter, baseC, newbaseC) %>%
+  gather(Forecast, interest, - year_quarter) %>%
+  ggplot()+ 
+  geom_line(aes(x= year_quarter, y = interest, col = Forecast))+ 
+  ylab("Intereste Rate")+ 
+  xlab("Year by Quarters")
+```
+
+
+
+```{r}
+test_A<- mydata %>%
+  filter(year_quarter>= "2016Q2" & year_quarter <= "2019Q3") %>% 
+  select( testrcon_A,realised_baseA,testnewbaseA)
+
+var(test_A$testnewbaseA-test_A$realised_baseA)-var(test_A$testrcon_A-test_A$realised_baseA)
+
+(mean((test_A$testnewbaseA-test_A$realised_baseA)^2)) - (mean((test_A$testrcon_A-test_A$realised_baseA)^2))
+
+mean(abs(test_A$testnewbaseA-test_A$realised_baseA))- mean(abs(test_A$testrcon_A-test_A$realised_baseA))
+
+```
+
+```{r}
+
+test_B<- mydata %>%
+  filter(year_quarter>= "2016Q2" & year_quarter <= "2019Q3") %>% 
+  select( testrcon_B,realised_baseB,testnewbaseB)
+
+
+((mean((test_B$testnewbaseB - test_B$realised_baseB)^2)))
+
+var(test_B$testnewbaseB-test_B$realised_baseB)-var(test_B$testrcon_B-test_B$realised_baseB)
+
+((mean((test_B$testnewbaseB -test_B$realised_baseB)^2^0.5)))-((mean((test_B$testrcon_B-test_B$realised_baseB)^2^0.5)))
+
+mean(abs(test_B$testnewbaseB-test_B$realised_baseB))- mean(abs(test_B$testrcon_B-test_B$realised_baseB))
+```
+
+```{r}
+
+test_C<- mydata %>%
+  filter(year_quarter>= "2016Q2" & year_quarter <= "2019Q3") %>% 
+  select( testrcon_C,realised_baseC,testnewbaseC)
+
+var(test_C$testnewbaseC-test_C$realised_baseC)-var(test_C$testrcon_C-test_C$realised_baseC)
+
+(mean((test_C$testnewbaseC-test_C$realised_baseC)^2)) - (mean((test_C$testrcon_C-test_C$realised_baseC)^2))
+```
+
+```{r}
+mydata %>%
+  filter(year_quarter>= "2016Q2" & year_quarter <= "2019Q3") %>% 
+  ggplot()+ 
+  geom_line(aes(x= year_quarter, y=realised_baseA- testnewbaseA, colour = "red"))+ 
+  geom_line(aes(x= year_quarter, y=realised_baseA- testrcon_A, colour = "pink"))+
+  xlab("Year by Quarters") + 
+  ylab("Interest Rate")+
+  theme_test() 
+```
+
+
+```{r}
+a<- mydata %>%
+  filter(year_quarter>= "2016Q2" & year_quarter <= "2019Q3") %>% 
+  ggplot() + 
+  geom_line(aes(x= year_quarter, y=testnewbaseA, col= "Unbiased Forecast A"))+ 
+  geom_line(aes(x= year_quarter, y=testrcon_A, col= "Reconciled forecast A"))+  
+  xlab("Year by Quarters") + ylab("Interest Rate") +
+  theme_test() + 
+  theme(legend.position = "top")
+
+mydata %>%
+  filter(year_quarter>= "2016Q2" & year_quarter <= "2019Q3") %>% 
+  ggplot() + 
+  geom_line(aes(x= year_quarter, y=testnewbaseA -testrcon_A, col= "Unbiased Forecast A"))+ 
+  xlab("Year by Quarters") + ylab("Interest Rate") +
+  theme_test() + 
+  theme(legend.position = "top")
+```
+
+```{r}
+b <- mydata %>%
+  filter(year_quarter>= "2016Q2" & year_quarter <= "2019Q3") %>% 
+  ggplot() + 
+  geom_line(aes(x= year_quarter, y=testnewbaseB, col= "Unbiased forecast B"))+ 
+  geom_line(aes(x= year_quarter, y=testrcon_B, col= "Reconciled forecast B"))+  
+  xlab("Year by Quarters") + ylab("Interest Rate") +
+  theme_test() + 
+  theme(legend.position = "top") 
+  
+```
+
+```{r}
+c<- mydata %>%
+  filter(year_quarter>= "2016Q2" & year_quarter <= "2019Q3") %>% 
+  ggplot() + 
+  geom_line(aes(x= year_quarter, y=testnewbaseC, col= "Unbiased forecast C"))+ 
+  geom_line(aes(x= year_quarter, y=testrcon_C, col= "Reconciled forecast C"))+  
+  xlab("Year by Quarters") + ylab("Interest Rate") +
+  theme_test() + 
+  theme(legend.position = "top")
+```
+
+```{r}
+ggarrange(a, b, c + rremove("x.text"), 
+          labels = c("A", "B", "C"),
+          ncol = 2, nrow = 2)
+```
+
+
